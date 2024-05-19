@@ -20,6 +20,12 @@ jobs:
       with:
         fetch-depth: 0
 
+    - name: Install Dependencies
+      run: npm i
+
+    - name: Run Tests      
+      run: npm test   
+
     - name: Get Latest Tag
       id: latesttag
       uses: WyriHaximus/github-action-get-previous-tag@v1.4.0
