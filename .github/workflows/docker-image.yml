@@ -1,0 +1,74 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  release:
+    types: ["published"]
+
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      repo-name: ${{ steps.set-repo-env.outputs.REPO_NAME }}
+      release-tag: ${{ steps.latesttag.outputs.tag }}
+
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+
+    - name: Get Latest Tag
+      id: latesttag
+      uses: WyriHaximus/github-action-get-previous-tag@v1.4.0
+      with:
+          fallback: v1.0.0
+            
+    - name: Set REPO_ENV variable
+      id: set-repo-env
+      run: |
+        REPO_NAME_LOWER=$(echo "${GITHUB_REPOSITORY#$GITHUB_REPOSITORY_OWNER/}" | tr '[:upper:]' '[:lower:]')
+        echo "REPO_NAME=${REPO_NAME_LOWER}" >> $GITHUB_OUTPUT
+
+    - name: Build Docker image
+      run: docker build -t ${{ steps.set-repo-env.outputs.REPO_NAME }} .
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Tag Docker Image
+      run: docker image tag ${{ steps.set-repo-env.outputs.REPO_NAME }} ${{ secrets.DOCKER_USERNAME }}/${{ steps.set-repo-env.outputs.REPO_NAME }}:${{ steps.latesttag.outputs.tag }}
+
+    - name: Push Docker image
+      run: docker push ${{ secrets.DOCKER_USERNAME }}/${{ steps.set-repo-env.outputs.REPO_NAME }}:${{ steps.latesttag.outputs.tag }}
+
+  update-deployment:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+    - name: Check out the Deployment_ToDo_App repository
+      uses: actions/checkout@v2
+      with:
+        repository: PaymentMicroserviceApp/Deployment_ToDo_App
+        ref: "main"
+        path: deployment_repo
+        token: ${{ secrets.REPO_TOKEN }}
+        fetch-depth: 0
+        persist-credentials: true
+        
+
+    - name: Update values.yml with new tag
+      run: |
+        cd deployment_repo/${{ needs.build.outputs.repo-name }}
+        sed -i 's/tag: .*/tag: "${{ needs.build.outputs.release-tag }}"/' values.yaml
+        git config --global user.email "${{ secrets.DOCKER_USERNAME }}"
+        git config --global user.name "${{ secrets.DOCKER_USERNAME }}"
+        git add values.yaml
+        git commit -m "Update image tag to ${{ needs.build.outputs.release-tag }}"
+        git push
